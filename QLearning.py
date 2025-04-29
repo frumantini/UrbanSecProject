@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import heapq
+import random
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 
@@ -50,26 +51,78 @@ def compute_penalty_matrix(walkable_matrix, penalty_radius=2):
     return penalty_matrix
 
 
-def get_points_from_click(img_path):
+def select_fixed_goal(img_path, walkable_matrix, block_size):
     img = np.array(Image.open(img_path))
     fig, ax = plt.subplots()
     ax.imshow(img)
+    
+    for r in range(len(walkable_matrix)):
+        for c in range(len(walkable_matrix[0])):
+            if walkable_matrix[r][c] == 1:
+                x, y = block_to_pixel(r, c, block_size)
+                ax.plot(x, y, '.', color='lime', alpha=0.2)
+    
     coords = []
 
     def onclick(event):
         if event.xdata and event.ydata:
-            coords.append((int(event.xdata), int(event.ydata)))
-            ax.plot(event.xdata, event.ydata, 'ro')
-            fig.canvas.draw()
-            if len(coords) == 2:
-                plt.close()
+            x, y = int(event.xdata), int(event.ydata)
+            block_r, block_c = pixel_to_block(x, y, block_size)
+            
+            # Verifica che il punto selezionato sia calpestabile
+            if 0 <= block_r < len(walkable_matrix) and 0 <= block_c < len(walkable_matrix[0]):
+                if walkable_matrix[block_r][block_c] == 1:
+                    coords.append((block_r, block_c))
+                    ax.plot(event.xdata, event.ydata, 'bo', markersize=10)
+                    fig.canvas.draw()
+                else:
+                    print("Il punto selezionato non è calpestabile. Riprova.")
+            else:
+                print("Punto fuori dai limiti della mappa. Riprova.")
 
     cid = fig.canvas.mpl_connect('button_press_event', onclick)
-    print("Clicca per selezionare START e GOAL (2 click).")
-    plt.show()
+    print("Clicca per selezionare i punti di GOAL (premi invio quando hai finito).")
+    plt.show(block=False)
+    
+    input("Premi invio quando hai finito di selezionare i punti goal...")
+    plt.close(fig)
     fig.canvas.mpl_disconnect(cid)
 
-    return coords if len(coords) == 2 else None
+    return coords
+
+
+def save_goals(map_id, goals):
+    # Salva i punti goal in un file JSON
+    goals_file = os.path.join(DATA_FOLDER, f"goals-{map_id}.json")
+    with open(goals_file, "w", encoding="utf-8") as f:
+        json.dump(goals, f)
+    print(f"Goals salvati in {goals_file}")
+
+
+def load_goals(map_id):
+    # Carica i punti goal da un file JSON
+    goals_file = os.path.join(DATA_FOLDER, f"goals-{map_id}.json")
+    if os.path.exists(goals_file):
+        with open(goals_file, "r", encoding="utf-8") as f:
+            goals_data = json.load(f)
+            # Converti le liste in tuple per garantire compatibilità
+            goals = [tuple(goal) for goal in goals_data]
+            return goals
+    return None
+
+
+def generate_random_start(walkable_matrix):
+    # Trova tutti i punti calpestabili
+    walkable_points = []
+    for r in range(len(walkable_matrix)):
+        for c in range(len(walkable_matrix[0])):
+            if walkable_matrix[r][c] == 1:
+                walkable_points.append((r, c))
+    
+    # Seleziona un punto casuale
+    if walkable_points:
+        return random.choice(walkable_points)
+    return None
 
 
 def pixel_to_block(x, y, block_size):
@@ -87,6 +140,10 @@ def a_star(walkable_matrix, start, goal, penalty_matrix=None):
     came_from = {}
     g_score = {start: 0}
     f_score = {start: heuristic(start, goal)}
+    
+    # Converti start e goal in tuple per garantire hashability
+    start = tuple(start)
+    goal = tuple(goal)
 
     def neighbors(pos):
         r, c = pos
@@ -114,6 +171,35 @@ def a_star(walkable_matrix, start, goal, penalty_matrix=None):
     return []  # Nessun percorso trovato
 
 
+def find_shortest_path_to_any_goal(walkable_matrix, start, goals, penalty_matrix=None):
+    best_path = None
+    best_path_length = float('inf')
+    best_goal = None
+    
+    # Assicurati che start sia una tupla
+    start = tuple(start)
+    
+    # Debug: stampa informazioni sui goal
+    print(f"Cercando percorso da {start} verso {len(goals)} goals")
+    for i, goal in enumerate(goals):
+        print(f"Goal {i+1}: {goal}, tipo: {type(goal)}")
+    
+    for goal in goals:
+        # Assicurati che il goal sia una tupla
+        goal_tuple = tuple(goal)
+        path = a_star(walkable_matrix, start, goal_tuple, penalty_matrix)
+        if path:
+            print(f"Trovato percorso di {len(path)} passi verso {goal_tuple}")
+            if len(path) < best_path_length:
+                best_path = path
+                best_path_length = len(path)
+                best_goal = goal_tuple
+        else:
+            print(f"Nessun percorso trovato verso {goal_tuple}")
+    
+    return best_path, best_goal
+
+
 def heuristic(a, b):
     return np.hypot(a[0] - b[0], a[1] - b[1])
 
@@ -127,7 +213,7 @@ def reconstruct_path(came_from, current):
     return path
 
 
-def plot_path(map_id, path, walkable_matrix, block_size=6):
+def plot_path(map_id, path, walkable_matrix, start, goal, block_size=6):
     img_path = os.path.join(DATA_FOLDER, f"{map_id}.png")
     img = np.array(Image.open(img_path))
     plt.figure(figsize=(10, 10))
@@ -139,15 +225,54 @@ def plot_path(map_id, path, walkable_matrix, block_size=6):
                 x, y = block_to_pixel(r, c, block_size)
                 plt.plot(x, y, '.', color='lime', alpha=0.2)
 
-    x_coords = [(col * block_size) + block_size // 2 for row, col in path]
-    y_coords = [(row * block_size) + block_size // 2 for row, col in path]
-    plt.plot(x_coords, y_coords, color="red", linewidth=2)
-    plt.scatter(x_coords[0], y_coords[0], color="green", label="Start")
-    plt.scatter(x_coords[-1], y_coords[-1], color="blue", label="Goal")
+    # Disegna il percorso
+    if path:
+        x_coords = [block_to_pixel(row, col, block_size)[0] for row, col in path]
+        y_coords = [block_to_pixel(row, col, block_size)[1] for row, col in path]
+        plt.plot(x_coords, y_coords, color="red", linewidth=2)
+    
+    # Disegna punto di partenza
+    start_x, start_y = block_to_pixel(start[0], start[1], block_size)
+    plt.scatter(start_x, start_y, color="green", s=100, zorder=10, label="Start (Random)")
+    
+    # Disegna punto di arrivo
+    goal_x, goal_y = block_to_pixel(goal[0], goal[1], block_size)
+    plt.scatter(goal_x, goal_y, color="blue", s=100, zorder=10, label="Goal")
+    
     plt.legend()
     plt.axis('off')
-    plt.title("Percorso A*")
+    plt.title("Percorso A* da Start Random a Goal Fisso")
     plt.show()
+
+
+def plot_all_goals(map_id, walkable_matrix, goals, block_size=6):
+    img_path = os.path.join(DATA_FOLDER, f"{map_id}.png")
+    img = np.array(Image.open(img_path))
+    plt.figure(figsize=(10, 10))
+    plt.imshow(img, alpha=0.6)
+
+    # Disegna tutti i punti goal
+    for i, goal in enumerate(goals):
+        goal_x, goal_y = block_to_pixel(goal[0], goal[1], block_size)
+        plt.scatter(goal_x, goal_y, color="blue", s=100, zorder=10)
+        plt.text(goal_x + 10, goal_y + 10, f"Goal {i+1}", fontsize=12, color="white", 
+                 bbox=dict(facecolor='black', alpha=0.7))
+    
+    plt.axis('off')
+    plt.title(f"Punti Goal per la Mappa {map_id}")
+    plt.show()
+
+
+def verify_walkable_points(walkable_matrix, points):
+    """Verifica che i punti siano validi nella matrice calpestabile"""
+    for r, c in points:
+        if not (0 <= r < len(walkable_matrix) and 0 <= c < len(walkable_matrix[0])):
+            print(f"Punto fuori dai limiti: {(r, c)}")
+            return False
+        if walkable_matrix[r][c] != 1:
+            print(f"Punto non calpestabile: {(r, c)}")
+            return False
+    return True
 
 
 if __name__ == "__main__":
@@ -162,26 +287,59 @@ if __name__ == "__main__":
     map_obj = load_map(MAP_ID)
     block_size = 6
     walkable_matrix = create_walkable_matrix(map_obj, block_size)
-
     penalty_matrix = compute_penalty_matrix(walkable_matrix, penalty_radius=2)
-
-    img_path = os.path.join(DATA_FOLDER, f"{MAP_ID}.png")
-    clicked = get_points_from_click(img_path)
-    if not clicked:
-        print("Selezione punti fallita.")
-        exit()
-
-    start_pixel, goal_pixel = clicked
-    start = pixel_to_block(*start_pixel, block_size)
-    goal = pixel_to_block(*goal_pixel, block_size)
-
-    if walkable_matrix[start[0]][start[1]] == 0 or walkable_matrix[goal[0]][goal[1]] == 0:
-        print("Start o goal non calpestabili.")
-        exit()
-
-    path = a_star(walkable_matrix, start, goal, penalty_matrix)
-    if not path:
-        print("Nessun percorso trovato.")
+    
+    # Carica i goal esistenti o crea nuovi goal
+    goals = load_goals(MAP_ID)
+    if not goals:
+        print("Nessun goal trovato per questa mappa. Seleziona i punti goal.")
+        img_path = os.path.join(DATA_FOLDER, f"{MAP_ID}.png")
+        goals = select_fixed_goal(img_path, walkable_matrix, block_size)
+        if goals:
+            save_goals(MAP_ID, goals)
+            plot_all_goals(MAP_ID, walkable_matrix, goals, block_size)
+        else:
+            print("Nessun goal selezionato.")
+            exit()
     else:
-        print(f"Trovato percorso di {len(path)} passi.")
-        plot_path(MAP_ID, path, walkable_matrix, block_size)
+        print(f"Caricati {len(goals)} punti goal.")
+        
+        # Verifica che i goal caricati siano validi
+        if verify_walkable_points(walkable_matrix, goals):
+            print("Tutti i goal sono validi.")
+            plot_all_goals(MAP_ID, walkable_matrix, goals, block_size)
+        else:
+            print("ATTENZIONE: Alcuni goal non sono validi!")
+            print("Vuoi selezionare nuovi goal? (s/n)")
+            if input().lower() == 's':
+                img_path = os.path.join(DATA_FOLDER, f"{MAP_ID}.png")
+                goals = select_fixed_goal(img_path, walkable_matrix, block_size)
+                if goals:
+                    save_goals(MAP_ID, goals)
+                    plot_all_goals(MAP_ID, walkable_matrix, goals, block_size)
+                else:
+                    print("Nessun goal selezionato.")
+                    exit()
+    
+    # Genera un punto di partenza casuale
+    start = generate_random_start(walkable_matrix)
+    if not start:
+        print("Impossibile generare un punto di partenza valido.")
+        exit()
+    
+    print(f"Punto di partenza generato: {start}")
+    
+    # Trova il percorso più breve verso uno dei goal
+    path, chosen_goal = find_shortest_path_to_any_goal(walkable_matrix, start, goals, penalty_matrix)
+    
+    if not path:
+        print("Nessun percorso trovato verso alcun goal.")
+        print("Dettagli di debug:")
+        print(f"Start: {start}, Tipo: {type(start)}")
+        print(f"Goals: {goals}")
+        # Verifica che i punti siano calpestabili
+        if walkable_matrix[start[0]][start[1]] != 1:
+            print("ERRORE: Il punto di partenza non è calpestabile!")
+    else:
+        print(f"Selezionato percorso più breve di {len(path)} passi verso il goal {chosen_goal}.")
+        plot_path(MAP_ID, path, walkable_matrix, start, chosen_goal, block_size)
