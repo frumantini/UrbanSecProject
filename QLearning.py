@@ -5,6 +5,7 @@ import os
 import sys
 import heapq
 from PIL import Image
+from scipy.ndimage import distance_transform_edt
 
 BASE_FOLDER = os.path.dirname(__file__)
 DATA_FOLDER = os.path.join(BASE_FOLDER, "data")
@@ -41,6 +42,14 @@ def create_walkable_matrix(map_obj, block_size=6):
     return walkable_matrix
 
 
+def compute_penalty_matrix(walkable_matrix, penalty_radius=2):
+    binary = np.array(walkable_matrix)
+    inverted = 1 - binary  # Ostacoli = 1, camminabili = 0
+    dist_from_walls = distance_transform_edt(binary)
+    penalty_matrix = np.where(dist_from_walls < penalty_radius, penalty_radius - dist_from_walls, 0)
+    return penalty_matrix
+
+
 def get_points_from_click(img_path):
     img = np.array(Image.open(img_path))
     fig, ax = plt.subplots()
@@ -71,7 +80,7 @@ def block_to_pixel(row, col, block_size):
     return col * block_size + block_size // 2, row * block_size + block_size // 2
 
 
-def a_star(walkable_matrix, start, goal):
+def a_star(walkable_matrix, start, goal, penalty_matrix=None):
     height, width = len(walkable_matrix), len(walkable_matrix[0])
     open_set = []
     heapq.heappush(open_set, (0, start))
@@ -81,7 +90,7 @@ def a_star(walkable_matrix, start, goal):
 
     def neighbors(pos):
         r, c = pos
-        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
             nr, nc = r + dr, c + dc
             if 0 <= nr < height and 0 <= nc < width and walkable_matrix[nr][nc] == 1:
                 yield (nr, nc)
@@ -92,7 +101,10 @@ def a_star(walkable_matrix, start, goal):
             return reconstruct_path(came_from, current)
 
         for neighbor in neighbors(current):
-            tentative_g = g_score[current] + 1
+            penalty = penalty_matrix[neighbor[0]][neighbor[1]] if penalty_matrix is not None else 0
+            step_cost = np.hypot(neighbor[0] - current[0], neighbor[1] - current[1])
+            tentative_g = g_score[current] + step_cost + penalty
+
             if tentative_g < g_score.get(neighbor, float('inf')):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g
@@ -103,7 +115,7 @@ def a_star(walkable_matrix, start, goal):
 
 
 def heuristic(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    return np.hypot(a[0] - b[0], a[1] - b[1])
 
 
 def reconstruct_path(came_from, current):
@@ -151,6 +163,8 @@ if __name__ == "__main__":
     block_size = 6
     walkable_matrix = create_walkable_matrix(map_obj, block_size)
 
+    penalty_matrix = compute_penalty_matrix(walkable_matrix, penalty_radius=2)
+
     img_path = os.path.join(DATA_FOLDER, f"{MAP_ID}.png")
     clicked = get_points_from_click(img_path)
     if not clicked:
@@ -165,7 +179,7 @@ if __name__ == "__main__":
         print("Start o goal non calpestabili.")
         exit()
 
-    path = a_star(walkable_matrix, start, goal)
+    path = a_star(walkable_matrix, start, goal, penalty_matrix)
     if not path:
         print("Nessun percorso trovato.")
     else:
