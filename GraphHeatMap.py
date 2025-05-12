@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 
-# Imposta i percorsi delle cartelle
+
 CARTELLA_BASE = os.path.dirname(__file__)
 CARTELLA_DATI = os.path.join(CARTELLA_BASE, "data")
 sys.path.append(CARTELLA_BASE)
