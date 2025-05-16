@@ -22,5 +22,29 @@
     "scale": 300,
     "height": 1563,
     "width": 2500
+  },
+  {
+    "id": 549362,
+    "scale": 111,
+    "height": 1563,
+    "width": 2500
+  },
+  {
+    "id": 703324,
+    "scale": 51,
+    "height": 1563,
+    "width": 2500
+  },
+  {
+	"id": 703372,
+	"scale": 18,
+	"height": 1563,
+	"width": 2500
+  },
+  {
+    "id": 703381,
+    "scale": 250,
+    "height": 1563,
+	"width": 2500
   }
 ]
