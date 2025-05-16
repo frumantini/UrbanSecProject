@@ -6,13 +6,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
-
+from models import Map
 
 CARTELLA_BASE = os.path.dirname(__file__)
 CARTELLA_DATI = os.path.join(CARTELLA_BASE, "data")
 sys.path.append(CARTELLA_BASE)
 
-from models import Map
 
 def carica_mappa(id_mappa):
     """Carica la mappa e i dati di calpestabilità associati."""
@@ -44,7 +43,7 @@ def crea_matrice_calpestabile(mappa, dimensione_blocco):
                 matrice[riga, colonna] = 1
     return matrice
 
-def calcola_matrice_penalità(matrice_calpestabile, dimensione_blocco, fattore_scalabilità=1.5):
+def calcola_matrice_penalità(matrice_calpestabile, dimensione_blocco, fattore_scalabilità=3):
     """Calcola penalità per blocchi vicini ai muri, con raggio di penalità adattato alla dimensione del blocco."""
     h, w = matrice_calpestabile.shape
     raggio_penalità = dimensione_blocco * fattore_scalabilità  # Adattiamo il raggio in base alla dimensione del blocco
@@ -170,7 +169,7 @@ def seleziona_uscite(id_mappa, dimensione_blocco, matrice_calpestabile):
     return min(uscite_valide, key=lambda u: euristica(blocco_inizio, u))
 
 def main():
-    mappe_disponibili = [703368, 703326, 703323]
+    mappe_disponibili = [703368, 703326, 703323, 703372, 703381, 549362]
     print(f"Mappe disponibili: {mappe_disponibili}")
     try:
         id_mappa = int(input("Inserisci ID della mappa: "))
