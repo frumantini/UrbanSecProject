@@ -8,6 +8,7 @@ from PIL import Image
 from scipy.ndimage import distance_transform_edt
 import time
 
+# Imposta i percorsi delle cartelle
 CARTELLA_BASE = os.path.dirname(__file__)
 CARTELLA_DATI = os.path.join(CARTELLA_BASE, "data")
 sys.path.append(CARTELLA_BASE)
@@ -44,19 +45,14 @@ def crea_matrice_calpestabile(mappa, dimensione_blocco):
                 matrice[riga, colonna] = 1
     return matrice
 
-def calcola_matrice_penalità(matrice_calpestabile, dimensione_blocco, fattore_scalabilità=1.5):
+def calcola_matrice_penalità(matrice_calpestabile, dimensione_blocco, fattore_scalabilità=4):
     """Calcola penalità per blocchi vicini ai muri, con raggio di penalità adattato alla dimensione del blocco."""
     h, w = matrice_calpestabile.shape
-    raggio_penalità = dimensione_blocco * fattore_scalabilità  # Adattiamo il raggio in base alla dimensione del blocco
+    raggio_penalità = dimensione_blocco * fattore_scalabilità
     distanza = distance_transform_edt(matrice_calpestabile)
-    
-    # Creiamo la penalità in base alla distanza ai muri
     penalità = np.where(distanza < raggio_penalità, (raggio_penalità - distanza) ** 2, 0)
-    
-    # Normalizziamo la penalità per non farla andare fuori scala
     penalità = 10 * penalità / penalità.max() if penalità.max() > 0 else penalità
     return penalità
-
 
 def prendi_punto_da_click(percorso_immagine):
     """Permette all'utente di cliccare sul punto di START su un'immagine."""
@@ -87,13 +83,12 @@ def blocco_a_pixel(riga, colonna, dimensione_blocco):
     """Converti coordinate blocco nel centro in pixel."""
     return colonna * dimensione_blocco + dimensione_blocco // 2, riga * dimensione_blocco + dimensione_blocco // 2
 
-def a_star(matrice_calpestabile, inizio, obiettivo, matrice_penalità=None):
-    """Algoritmo A* con supporto per penalità personalizzate per zona."""
+def dijkstra(matrice_calpestabile, inizio, obiettivo, matrice_penalità=None):
+    """Algoritmo di Dijkstra con supporto per penalità personalizzate per zona."""
     h, w = matrice_calpestabile.shape
     da_esplorare = [(0, inizio)]
     da_dove = {}
     costo_g = {inizio: 0}
-    costo_f = {inizio: euristica(inizio, obiettivo)}
 
     def vicini(pos):
         r, c = pos
@@ -105,7 +100,7 @@ def a_star(matrice_calpestabile, inizio, obiettivo, matrice_penalità=None):
                 yield (nr, nc)
 
     while da_esplorare:
-        _, attuale = heapq.heappop(da_esplorare)
+        costo_attuale, attuale = heapq.heappop(da_esplorare)
         if attuale == obiettivo:
             return ricostruisci_percorso(da_dove, attuale)
 
@@ -117,14 +112,9 @@ def a_star(matrice_calpestabile, inizio, obiettivo, matrice_penalità=None):
             if tentativo_g < costo_g.get(vicino, float("inf")):
                 da_dove[vicino] = attuale
                 costo_g[vicino] = tentativo_g
-                costo_f[vicino] = tentativo_g + euristica(vicino, obiettivo)
-                heapq.heappush(da_esplorare, (costo_f[vicino], vicino))
+                heapq.heappush(da_esplorare, (tentativo_g, vicino))
 
     return []
-
-def euristica(a, b):
-    """Stima della distanza tra due punti (distanza euclidea)."""
-    return np.hypot(a[0] - b[0], a[1] - b[1])
 
 def ricostruisci_percorso(da_dove, attuale):
     """Ricostruisce il percorso una volta raggiunto l'obiettivo."""
@@ -135,7 +125,7 @@ def ricostruisci_percorso(da_dove, attuale):
     return percorso[::-1]
 
 def mostra_percorso_e_penalità(id_mappa, percorso, matrice_penalità, dimensione_blocco):
-    """Visualizza il percorso e la mappa delle penalità (verde = calpestabile, , giallo=penalità, rosso = non calpestabile)."""
+    """Visualizza il percorso e la mappa delle penalità."""
     img = np.array(Image.open(os.path.join(CARTELLA_DATI, f"{id_mappa}.png")))
     penalità_img = np.kron(matrice_penalità, np.ones((dimensione_blocco, dimensione_blocco)))
     penalità_img = penalità_img[:img.shape[0], :img.shape[1]]
@@ -151,7 +141,7 @@ def mostra_percorso_e_penalità(id_mappa, percorso, matrice_penalità, dimension
 
     plt.axis("off")
     plt.legend()
-    plt.title("Percorso A* e penalità (verde = calpestabile, rosso = non calpestabile)")
+    plt.title("Percorso Dijkstra e penalità (verde = calpestabile, rosso = non calpestabile)")
     plt.show()
 
 def seleziona_uscite(id_mappa, dimensione_blocco, matrice_calpestabile):
@@ -166,11 +156,10 @@ def seleziona_uscite(id_mappa, dimensione_blocco, matrice_calpestabile):
     if not uscite_valide:
         raise ValueError("Nessuna uscita valida trovata nella mappa.")
     
-    # Seleziona l'uscita più vicina al punto di partenza
-    return min(uscite_valide, key=lambda u: euristica(blocco_inizio, u))
+    return min(uscite_valide, key=lambda u: np.hypot(blocco_inizio[0] - u[0], blocco_inizio[1] - u[1]))
 
 def main():
-    mappe_disponibili = [703368, 703326, 703323,703368, 703326, 703323, 703372, 703381, 549362,703428]
+    mappe_disponibili = [703368, 703326, 703323, 703372, 703381, 549362, 703428]
     print(f"Mappe disponibili: {mappe_disponibili}")
     try:
         id_mappa = int(input("Inserisci ID della mappa: "))
@@ -184,13 +173,12 @@ def main():
     mappa = carica_mappa(id_mappa)
     matrice_calpestabile = crea_matrice_calpestabile(mappa, dimensione_blocco)
 
-    # Ottieni il punto di partenza dal click dell'utente
     punto_click = prendi_punto_da_click(os.path.join(CARTELLA_DATI, f"{id_mappa}.png"))
     if not punto_click:
         print("Errore nella selezione del punto di partenza.")
         return
 
-    global blocco_inizio  # Serve per la funzione seleziona_uscite
+    global blocco_inizio
     blocco_inizio = pixel_a_blocco(*punto_click, dimensione_blocco)
     uscita_selezionata = seleziona_uscite(id_mappa, dimensione_blocco, matrice_calpestabile)
 
@@ -198,40 +186,33 @@ def main():
 
     matrice_penalità = calcola_matrice_penalità(matrice_calpestabile, dimensione_blocco)
 
-    # Ricerca percorso con A*
-    percorso = a_star(matrice_calpestabile, blocco_inizio, uscita_selezionata, matrice_penalità)
-    if not percorso:
-        print("Nessun percorso trovato.")
-        return
-
+    percorso = dijkstra(matrice_calpestabile, blocco_inizio, uscita_selezionata, matrice_penalità)
     
-    inizio_tempo = time.time()
-    percorso = a_star(matrice_calpestabile, blocco_inizio, uscita_selezionata, matrice_penalità)
-    tempo_esecuzione = time.time() - inizio_tempo
-
+    
+    start_time = time.time()
+    percorso = dijkstra(matrice_calpestabile, blocco_inizio, uscita_selezionata, matrice_penalità)
+    tempo_esecuzione = time.time() - start_time  
+    
     if not percorso:
         print("Nessun percorso trovato.")
         return
-
-    # Calcolo delle metriche
-    lunghezza_blocchi = len(percorso)
+    
+    lunghezza_percorso = len(percorso)
     costo_totale = 0
     for i in range(1, len(percorso)):
-        p1 = percorso[i - 1]
-        p2 = percorso[i]
-        distanza = np.hypot(p2[0] - p1[0], p2[1] - p1[1])
-        penalità = matrice_penalità[p2]
-        costo_totale += distanza + penalità
-
-    # Stampa delle metriche
-    print("\n=== METRICHE PERCORSO  ===")
-    print(f"Lunghezza (blocchi): {lunghezza_blocchi}")
+       r1, c1 = percorso[i - 1]
+       r2, c2 = percorso[i]
+       distanza = np.hypot(r2 - r1, c2 - c1)
+       penalità = matrice_penalità[r2, c2]
+       costo_totale += distanza + penalità
+   
+    print("\n=== METRICHE PERCORSO (Dijkstra) ===")
+    print(f"Lunghezza (blocchi): {lunghezza_percorso}")
     print(f"Costo totale (distanza + penalità): {costo_totale:.2f}")
     print(f"Tempo di esecuzione: {tempo_esecuzione:.4f} secondi")
-
-
+    
     mostra_percorso_e_penalità(id_mappa, percorso, matrice_penalità, dimensione_blocco)
-    
-    
-    
+
+
 main()
+ 
